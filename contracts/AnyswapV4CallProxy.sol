@@ -51,19 +51,20 @@ abstract contract MPCManageable {
 
 // support limit operations to whitelist
 abstract contract Whitelistable is MPCManageable {
-    mapping(address => mapping(address => bool)) isInWhitelist;
-    mapping(address => address[]) whitelists;
+    mapping(address => mapping(uint256 => mapping(address => bool))) isInWhitelist;
+    mapping(address => mapping(uint256 =>address[])) whitelists;
 
-    event LogSetWhitelist(address indexed from, address indexed to, bool indexed flag);
+    event LogSetWhitelist(address indexed from, uint256 indexed chainID, address indexed to, bool flag);
 
     modifier onlyFromWhitelist(address from) {
-        require(isInWhitelist[address(this)][from], "AnyCall: caller is not in whitelist");
+        require(isInWhitelist[address(this)][block.chainid][from], "AnyCall: caller is not in whitelist");
         _;
     }
 
-    modifier onlyToWhitelist(address from, address[] memory to) {
+    modifier onlyToWhitelist(address from, uint256 chainID, address[] memory to) {
+        mapping(address => bool) storage map = isInWhitelist[from][chainID];
         for (uint256 i = 0; i < to.length; i++) {
-            require(isInWhitelist[from][to[i]], "AnyCall: to address is not in whitelist");
+            require(map[to[i]], "AnyCall: to address is not in whitelist");
         }
         _;
     }
@@ -71,17 +72,21 @@ abstract contract Whitelistable is MPCManageable {
     constructor(address _mpc) MPCManageable(_mpc) {
     }
 
-    function whitelistLength(address from) external view returns (uint256) {
-        return whitelists[from].length;
+    function whitelistLength(address from, uint256 chainID) external view returns (uint256) {
+        return whitelists[from][chainID].length;
     }
 
-    function whitelist(address to, bool flag) external {
-        this.adminWhitelist(msg.sender, to, flag);
+    function whitelist(uint256 chainID, address to, bool flag) external {
+        this.adminWhitelist(msg.sender, chainID, to, flag);
     }
 
-    function adminWhitelist(address from, address to, bool flag) external onlyMPC {
-        require(isInWhitelist[from][to] != flag, "nothing change");
-        address[] storage list = whitelists[from];
+    function whitelistCaller(address caller, bool flag) external onlyMPC {
+        this.adminWhitelist(address(this), block.chainid, caller, flag);
+    }
+
+    function adminWhitelist(address from, uint256 chainID, address to, bool flag) external onlyMPC {
+        require(isInWhitelist[from][chainID][to] != flag, "nothing change");
+        address[] storage list = whitelists[from][chainID];
         if (flag) {
             list.push(to);
         } else {
@@ -95,8 +100,8 @@ abstract contract Whitelistable is MPCManageable {
                 }
             }
         }
-        isInWhitelist[from][to] = flag;
-        emit LogSetWhitelist(from, to, flag);
+        isInWhitelist[from][chainID][to] = flag;
+        emit LogSetWhitelist(from, chainID, to, flag);
     }
 }
 
@@ -127,7 +132,7 @@ abstract contract Billing is MPCManageable {
     function bill(address from, address[] memory to, bytes[] memory data, uint256 toChainID) internal {
         uint256 price = 0;
         for (uint i=0; i<to.length; i++) {
-            price += this.getPrice(from, to[i], data, toChainID);
+            price += getPrice(from, to[i], data, toChainID);
         }
         require(msg.value >= price, "Pay bill failed");
         emit LogPayment(from, price);
@@ -169,8 +174,7 @@ contract AnyCallProxy is Whitelistable, Billing {
         address[] memory callbacks,
         uint256[] memory nonces,
         uint256 toChainID
-    ) external onlyFromWhitelist(msg.sender) onlyToWhitelist(msg.sender, to) payable {
-        bill(msg.sender, to, data, toChainID);
+    ) external onlyFromWhitelist(msg.sender) onlyToWhitelist(msg.sender, toChainID, to) {
         emit LogAnyCall(msg.sender, to, data, callbacks, nonces, cID, toChainID);
     }
 
@@ -186,9 +190,10 @@ contract AnyCallProxy is Whitelistable, Billing {
         uint256 length = to.length;
         bool[] memory success = new bool[](length);
         bytes[] memory results = new bytes[](length);
+        uint256 chainID = block.chainid;
         for (uint256 i = 0; i < length; i++) {
             address _to = to[i];
-            if (isInWhitelist[from][_to]) {
+            if (isInWhitelist[from][chainID][_to]) {
                 (success[i], results[i]) = _to.call{value:0}(data[i]);
             } else {
                 (success[i], results[i]) = (false, "forbid calling");

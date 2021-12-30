@@ -105,6 +105,10 @@ abstract contract Whitelistable is MPCManageable {
     }
 }
 
+interface IERC20 {
+    function transferFrom(address sender, address recipient, uint256 amount) external returns (bool);
+}
+
 abstract contract Billing is MPCManageable {
     address payable dao;
 
@@ -112,30 +116,36 @@ abstract contract Billing is MPCManageable {
         dao = payable(_dao);
     }
 
-    event LogPayment(address from, uint256 price);
-
-    mapping(address => mapping(address => uint256)) public priceList;
-
-    function setPrice(address from, address to, uint256 price) public onlyMPC {
-        priceList[from][to] = price;
+    struct Price {
+        address token;
+        uint256 amount;
     }
 
-    function withdraw(uint256 amount)  public onlyMPC returns (bool) {
-        return dao.send(amount);
+    event LogPayment(address from, Price price);
+
+    mapping(address => mapping(address => Price)) public priceList;
+    mapping(address => bool) public payByContract;
+
+    function setPrice(address from, address to, address token, uint256 price) public onlyMPC {
+        priceList[from][to] = Price(token, price);
     }
 
-    function getPrice(address from, address to, bytes[] memory data, uint256 toChainID) public view returns (uint256) {
-        uint256 price = priceList[from][to];
-        return price;
+    function getPrice(address from, address to, bytes[] memory data, uint256 toChainID) public view returns (Price memory) {
+        return priceList[from][to];
     }
 
-    function bill(address from, address[] memory to, bytes[] memory data, uint256 toChainID) internal {
-        uint256 price = 0;
+    function pay(address from, address[] memory to, bytes[] memory data, uint256 toChainID) internal {
         for (uint i=0; i<to.length; i++) {
-            price += getPrice(from, to[i], data, toChainID);
+            Price memory price = getPrice(from, to[i], data, toChainID);
+            bool res = false;
+            if (payByContract[from]) {
+                res = IERC20(price.token).transferFrom(from, dao, price.amount);
+            } else {
+                res = IERC20(price.token).transferFrom(tx.origin, dao, price.amount);
+            }
+            require(res, "pay bill failed");
+            emit LogPayment(from, price);
         }
-        require(msg.value >= price, "Pay bill failed");
-        emit LogPayment(from, price);
     }
 }
 
@@ -175,6 +185,7 @@ contract AnyCallProxy is Whitelistable, Billing {
         uint256[] memory nonces,
         uint256 toChainID
     ) external onlyFromWhitelist(msg.sender) onlyToWhitelist(msg.sender, toChainID, to) {
+        pay(msg.sender, to, data, toChainID);
         emit LogAnyCall(msg.sender, to, data, callbacks, nonces, cID, toChainID);
     }
 

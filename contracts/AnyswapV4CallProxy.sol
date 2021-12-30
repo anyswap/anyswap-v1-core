@@ -100,7 +100,41 @@ abstract contract Whitelistable is MPCManageable {
     }
 }
 
-contract AnyCallProxy is Whitelistable {
+abstract contract Billing is MPCManageable {
+    address payable dao;
+
+    constructor (address _dao) {
+        dao = payable(_dao);
+    }
+
+    event LogPayment(address from, uint256 price);
+
+    mapping(address => mapping(address => uint256)) public priceList;
+
+    function setPrice(address from, address to, uint256 price) public onlyMPC {
+        priceList[from][to] = price;
+    }
+
+    function withdraw(uint256 amount)  public onlyMPC returns (bool) {
+        return dao.send(amount);
+    }
+
+    function getPrice(address from, address to, bytes[] memory data, uint256 toChainID) public view returns (uint256) {
+        uint256 price = priceList[from][to];
+        return price;
+    }
+
+    function bill(address from, address[] memory to, bytes[] memory data, uint256 toChainID) internal {
+        uint256 price = 0;
+        for (uint i=0; i<to.length; i++) {
+            price += this.getPrice(from, to[i], data, toChainID);
+        }
+        require(msg.value >= price, "Pay bill failed");
+        emit LogPayment(from, price);
+    }
+}
+
+contract AnyCallProxy is Whitelistable, Billing {
     uint256 public immutable cID;
 
     event LogAnyCall(address indexed from, address[] to, bytes[] data,
@@ -116,7 +150,7 @@ contract AnyCallProxy is Whitelistable {
         unlocked = 1;
     }
 
-    constructor(address _mpc) Whitelistable(_mpc) {
+    constructor(address _mpc, address _dao) Whitelistable(_mpc) Billing(_dao) {
         cID = block.chainid;
     }
 
@@ -135,7 +169,8 @@ contract AnyCallProxy is Whitelistable {
         address[] memory callbacks,
         uint256[] memory nonces,
         uint256 toChainID
-    ) external onlyFromWhitelist(msg.sender) onlyToWhitelist(msg.sender, to) {
+    ) external onlyFromWhitelist(msg.sender) onlyToWhitelist(msg.sender, to) payable {
+        bill(msg.sender, to, data, toChainID);
         emit LogAnyCall(msg.sender, to, data, callbacks, nonces, cID, toChainID);
     }
 

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-pragma solidity ^0.8.6;
+pragma solidity ^0.8.0;
 
 contract ReentrantLock {
     bool locked;
@@ -179,7 +179,7 @@ contract AnyCallExecutor {
     }
 }
 
-interface IAnyCallV7Proxy {
+interface IAnyCallProxyV7 {
     function executor() external view returns (address);
 
     function anyCall(CallArgs memory _callArgs)
@@ -221,23 +221,24 @@ contract UniGas is IUniGas {
 }
 
 /**
- * AnyCallV7Proxy
- * 1. Claim usage and pay fee on source chain
- * 2. Measure gas cost in Uni gas
- * 3. Store fail messages on source chain, allow fallback or retry
+ * AnyCallProxyV7
  */
-contract AnyCallV7Proxy is
-    IAnyCallV7Proxy,
+contract AnyCallProxyV7 is
+    IAnyCallProxyV7,
     ReentrantLock,
     Pausable,
     MPCControllable
 {
     /**
-        0
-        0 - autofallback -> 2
-        0 - autofallback -> 1 - fallback -> 2
-                                         -> 1
-        0 - autofallback -> 1 - retry -> 0
+        AnyCall task status graph
+        0 - execution success -> 0
+          - autofallback success -> 2
+          - autofallback fail -> 1
+          - autofallback not allowed -> 1
+
+        1 - fallback success -> 2
+          - fallback fail -> 1
+          - retry -> 0
      */
     uint8 constant Status_Sent = 0;
     uint8 constant Status_Fail = 1;
@@ -302,6 +303,12 @@ contract AnyCallV7Proxy is
         uint256 uniGasValue
     );
 
+    event Approved(
+        address app,
+        uint256 execFeeAllowance,
+        uint256 recrFeeAllowance
+    );
+
     event Arrear(
         address app,
         int256 balance
@@ -315,8 +322,8 @@ contract AnyCallV7Proxy is
     mapping(bytes32 => AnycallStatus) public anycallStatus;
 
     mapping(address => int256) public balanceOf; // receiver => UniGas balance
-    mapping(address => uint256) public execFeeApproved; // receiver => execution fee approved
-    mapping(address => uint256) public recrFeeApproved; // receiver => execution fee approved
+    mapping(address => uint256) public execFeeAllowance; // receiver => execution fee approved
+    mapping(address => uint256) public recrFeeAllowance; // receiver => execution fee approved
 
     address public uniGas;
 
@@ -431,10 +438,10 @@ contract AnyCallV7Proxy is
         bool success;
         bytes memory result;
 
-        int recursionBudget = int128(_execArgs.recursionGasLimit) + int256(recrFeeApproved[address(_execArgs.receiver)]);
+        int recursionBudget = int128(_execArgs.recursionGasLimit) + int256(recrFeeAllowance[address(_execArgs.receiver)]);
         context.uniGasLeft += recursionBudget;
 
-        uint256 gasLimit = IUniGas(uniGas).uniGasToEth(uint256(_execArgs.executionGasLimit) + execFeeApproved[address(_execArgs.receiver)]) / tx.gasprice - gasReserved;
+        uint256 gasLimit = IUniGas(uniGas).uniGasToEth(uint256(_execArgs.executionGasLimit) + execFeeAllowance[address(_execArgs.receiver)]) / tx.gasprice - gasReserved;
 
         uint256 executionGasUsage = gasleft();
 
@@ -468,10 +475,12 @@ contract AnyCallV7Proxy is
         int executionUniGasUsage = int(IUniGas(uniGas).ethToUniGas(executionGasUsage * tx.gasprice));
         int recursionUsage = recursionBudget - context.uniGasLeft;
 
-        execFeeApproved[address(_execArgs.receiver)] -= uint(executionUniGasUsage);
+        execFeeAllowance[address(_execArgs.receiver)] -= uint(executionUniGasUsage);
         balanceOf[address(_execArgs.receiver)] -= executionUniGasUsage;
-        recrFeeApproved[address(_execArgs.receiver)] -= uint(recursionUsage);
+
+        recrFeeAllowance[address(_execArgs.receiver)] -= uint(recursionUsage);
         balanceOf[address(_execArgs.receiver)] -= recursionUsage;
+
         if (balanceOf[address(_execArgs.receiver)] < 0) {
             // Never runs
             emit Arrear(address(_execArgs.receiver), balanceOf[address(_execArgs.receiver)]);
@@ -575,12 +584,20 @@ contract AnyCallV7Proxy is
         emit Deposit(app, msg.value, uniGasAmount);
     }
 
-    function withdraw(address app, uint256 amount) public {
+    function withdraw(address app, uint256 amount) public returns(uint256 ethAmount) {
         require(msg.sender == app, "not allowed");
         balanceOf[app] -= int256(amount);
-        uint256 ethAmount = IUniGas(uniGas).uniGasToEth(amount);
+        ethAmount = IUniGas(uniGas).uniGasToEth(amount);
         (bool success,) = app.call{value: ethAmount}("");
         require(success);
         emit Withdraw(app, ethAmount, amount);
+        return ethAmount;
+    }
+
+    function approve(address app, uint256 execFeeAllowance_, uint256 recrFeeAllowance_) external {
+        require(msg.sender == app, "not allowed");
+        execFeeAllowance[app] = execFeeAllowance_;
+        recrFeeAllowance[app] = recrFeeAllowance_;
+        emit Approved(app, execFeeAllowance_, recrFeeAllowance_);
     }
 }

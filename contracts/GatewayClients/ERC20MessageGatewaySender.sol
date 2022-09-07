@@ -9,11 +9,20 @@ abstract contract ERC20_Message_Gateway_Sender {
     address gateway;
 
     /// @dev User entrance demo
-    function send(uint256 toChainID, uint256 amount, address receiver, address callTo) external payable {
+    function send(
+        uint256 toChainID,
+        uint256 amount,
+        address receiver,
+        address callTo
+    ) external payable {
         SwapOutArgs memory swapargs = SwapOutArgs(toChainID, receiver, amount);
 
         bytes memory boundMessage = "any message";
 
-        IERC20MessageGateway(gateway).SwapOut_and_call(swapargs, callTo, boundMessage);
+        IERC20MessageGateway(gateway).SwapOut_and_call(
+            swapargs,
+            callTo,
+            boundMessage
+        );
     }
 }

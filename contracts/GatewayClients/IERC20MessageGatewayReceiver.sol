@@ -7,5 +7,10 @@ import "../interfaces/Types.sol";
 interface IERC20_Message_Gateway_Receiver {
     // onlyGateway
     // verify boudnMessageSender if boudnMessage is nontradable
-    function handleMessage(SwapOutArgs memory swapargs, address boudnMessageSender, bytes memory boundMessage, uint256 nonce) external returns (bool success);
+    function handleMessage(
+        SwapOutArgs memory swapargs,
+        address boudnMessageSender,
+        bytes memory boundMessage,
+        uint256 nonce
+    ) external returns (bool success);
 }

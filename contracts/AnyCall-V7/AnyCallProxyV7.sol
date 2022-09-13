@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 pragma solidity ^0.8.0;
 
+import "./OwnableUpgradeable.sol";
+
 contract ReentrantLock {
     bool locked;
     modifier lock() {
@@ -227,7 +229,8 @@ contract AnyCallProxyV7 is
     IAnyCallProxyV7,
     ReentrantLock,
     Pausable,
-    MPCControllable
+    MPCControllable,
+    OwnableUpgradeable
 {
     /**
         AnyCall task status graph
@@ -332,8 +335,8 @@ contract AnyCallProxyV7 is
         uint256 expireTime;
     }
 
-    uint256 public immutable gasOverhead; // source chain
-    uint256 public immutable gasReserved; // dest chain execution gas reserved
+    uint256 public gasOverhead; // source chain
+    uint256 public gasReserved; // dest chain execution gas reserved
 
     Config public config;
 
@@ -345,7 +348,9 @@ contract AnyCallProxyV7 is
 
     /// @param _mpc mpc address
     /// @param autoFallbackExecutionGasCost Gas cost for auto fallback execution
-    constructor(address _mpc, address _uniGas, uint256 _gasOverhead, uint256 autoFallbackExecutionGasCost, uint256 expireTime, uint256 _gasReserved) {
+    function initiate(address _mpc, address _uniGas, uint256 _gasOverhead, uint256 autoFallbackExecutionGasCost, uint256 expireTime, uint256 _gasReserved) public initializer {
+        __Context_init_unchained();
+        __Ownable_init_unchained();
         mpc = _mpc;
         setAdmin(msg.sender);
         executor = address(new AnyCallExecutor(address(this)));

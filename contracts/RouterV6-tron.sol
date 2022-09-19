@@ -149,7 +149,19 @@ interface IERC20 {
     event Approval(address indexed owner, address indexed spender, uint256 value);
 }
 
+library Address {
+    function isContract(address account) internal view returns (bool) {
+        bytes32 codehash;
+        bytes32 accountHash = 0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470;
+        // solhint-disable-next-line no-inline-assembly
+        assembly { codehash := extcodehash(account) }
+        return (codehash != 0x0 && codehash != accountHash);
+    }
+}
+
 library SafeERC20 {
+    using Address for address;
+
     function safeTransfer(IERC20 token, address to, uint value) internal {
         callOptionalReturn(token, abi.encodeWithSelector(token.transfer.selector, to, value));
     }
@@ -166,7 +178,7 @@ library SafeERC20 {
     }
 
     function callOptionalReturn(IERC20 token, bytes memory data) private {
-        require(address(token).isContract, "SafeERC20: call to non-contract");
+        require(address(token).isContract(), "SafeERC20: call to non-contract");
 
         // solhint-disable-next-line avoid-low-level-calls
         (bool success, bytes memory returndata) = address(token).call(data);

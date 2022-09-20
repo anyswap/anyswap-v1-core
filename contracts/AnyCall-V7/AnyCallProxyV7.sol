@@ -192,34 +192,9 @@ interface IAnyCallProxyV7 {
     function retry(bytes32 requestID, ExecArgs calldata _execArgs, uint128 executionGasLimit, uint128 recursionGasLimit) external payable returns (bytes32);
 }
 
-/**
- * Convert between Uni gas and ETH
- * Make Uni gas pegged to USD
- */
-abstract contract IUniGas {
-    uint256 ethPrice; // in USD, decimal is 6
-
-    function ethToUniGas(uint256 amount) public view returns (uint256) {
-        return amount * ethPrice / 1 ether;
-    }
-
-    function uniGasToEth(uint256 amount) public view returns (uint256) {
-        return amount / ethPrice * 1 ether;
-    }
-}
-
-contract UniGas is IUniGas {
-    constructor(address oracle) {
-        trustedOracle = oracle;
-    }
-
-    address public trustedOracle;
-
-    /// @notice set eth price from trusted oracle
-    function setEthPrice(uint256 _ethPrice) public {
-        require(msg.sender == trustedOracle);
-        ethPrice = _ethPrice;
-    }
+interface IUniGas {
+    function ethToUniGas(uint256 amount) virtual external view returns (uint256);
+    function uniGasToEth(uint256 amount) virtual external view returns (uint256);
 }
 
 /**

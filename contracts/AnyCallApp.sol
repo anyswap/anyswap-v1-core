@@ -6,9 +6,12 @@ import "./interfaces/IExecutor.sol";
 
 abstract contract AnyCallApp is Administrable {
     uint256 public flag; // 0: pay on dest chain, 2: pay on source chain
-    address public anyCallProxy;
+    address public immutable anyCallProxy;
 
     mapping(uint256 => address) internal peer;
+
+    event SetPeers(uint256[] chainIDs, address[] peers);
+    event SetAnyCallProxy(address proxy);
 
     modifier onlyExecutor() {
         require(msg.sender == IAnycallV6Proxy(anyCallProxy).executor());
@@ -23,6 +26,7 @@ abstract contract AnyCallApp is Administrable {
     function setPeers(uint256[] memory chainIDs, address[] memory  peers) public onlyAdmin {
         for (uint i = 0; i < chainIDs.length; i++) {
             peer[chainIDs[i]] = peers[i];
+            emit SetPeers(chainIDs, peers);
         }
     }
 
@@ -30,9 +34,13 @@ abstract contract AnyCallApp is Administrable {
         return peer[foreignChainID];
     }
 
-    function setAnyCallProxy(address proxy) public onlyAdmin {
-        anyCallProxy = proxy;
-    }
+    /**
+     * @dev Uncomment this function if the app owner wants full control of the contract.
+     */
+    //function setAnyCallProxy(address proxy) public onlyAdmin {
+    //    anyCallProxy = proxy;
+    //    emit SetAnyCallProxy(proxy);
+    //}
 
     function _anyExecute(uint256 fromChainID, bytes calldata data) internal virtual returns (bool success, bytes memory result);
 

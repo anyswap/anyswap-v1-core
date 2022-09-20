@@ -235,7 +235,6 @@ contract AnyCallProxyV7 is
     uint8 constant Status_Sent = 0;
     uint8 constant Status_Fail = 1;
     uint8 constant Status_Fallback_Success = 2;
-    uint8 constant Status_Retry_Success = 3;
 
     struct AnycallStatus {
         uint8 status;
@@ -313,6 +312,11 @@ contract AnyCallProxyV7 is
     }
 
     Context public context;
+
+    modifier onlyInternal() {
+        require(msg.sender == address(this));
+        _;
+    }
 
     /// @param _mpc mpc address
     /// @param autoFallbackExecutionGasCost Gas cost for auto fallback execution
@@ -411,7 +415,7 @@ contract AnyCallProxyV7 is
             _callArgs.data
         );
         anycallStatus[requestID].execHash = calcExecArgsHash(_execArgs);
-        anycallStatus[requestID].status = 0;
+        anycallStatus[requestID].status = Status_Sent;
         anycallStatus[requestID].timestamp = block.timestamp;
 
         checkUniGas(_callArgs.executionGasLimit + _callArgs.recursionGasLimit);
@@ -450,13 +454,7 @@ contract AnyCallProxyV7 is
         uint256 executionGasUsage = gasleft();
 
         try
-            AnyCallExecutor(executor).appExec{gas: gasLimit}(
-                _execArgs.fromChainId,
-                address(_execArgs.sender),
-                address(_execArgs.receiver),
-                _execArgs.data,
-                _execArgs.callNonce
-            )
+            this._anyExec(_execArgs, gasLimit)
         returns (bool succ, bytes memory res) {
             (success, result) = (succ, res);
         } catch Error(string memory reason) {
@@ -464,9 +462,6 @@ contract AnyCallProxyV7 is
         } catch (bytes memory reason) {
             result = reason;
         }
-
-        assert(context.uniGasLeft >= 0);
-        context.uniGasLeft = 0;
 
         if (success) {
             emit LogAnyExec(requestID, _execArgs, execNonce, result);
@@ -482,20 +477,23 @@ contract AnyCallProxyV7 is
 
         executionGasUsage = executionGasUsage - gasleft();
 
-        int256 executionUniGasUsage = int256(
-            IUniGas(uniGas).ethToUniGas(executionGasUsage * tx.gasprice)
-        );
-        int256 recursionUsage = recursionBudget - context.uniGasLeft;
+        int256 appExecutionUniGasUsage = int256(IUniGas(uniGas).ethToUniGas(executionGasUsage * tx.gasprice)); // asserting positive
+        appExecutionUniGasUsage -= int128(_execArgs.executionGasLimit); // pos or neg
 
-        execFeeAllowance[address(_execArgs.receiver)] -= uint256(
-            executionUniGasUsage
-        );
-        balanceOf[address(_execArgs.receiver)] -= executionUniGasUsage;
+        // update app exec fee allowance, decrease only
+        execFeeAllowance[address(_execArgs.receiver)] -= appExecutionUniGasUsage > 0 ? uint256(appExecutionUniGasUsage) : 0;
 
-        recrFeeAllowance[address(_execArgs.receiver)] -= uint256(
-            recursionUsage
-        );
-        balanceOf[address(_execArgs.receiver)] -= recursionUsage;
+        int256 appRecursionUsage = recursionBudget - context.uniGasLeft;
+        appRecursionUsage -= int128(_execArgs.recursionGasLimit); // pos or neg
+
+        // update app recr fee allowance, decrease only
+        recrFeeAllowance[address(_execArgs.receiver)] -= appRecursionUsage > 0 ? uint256(appRecursionUsage) : 0;
+
+        // update app fee balance, increase or decrease
+        balanceOf[address(_execArgs.receiver)] -= appExecutionUniGasUsage;
+        balanceOf[address(_execArgs.receiver)] -= appRecursionUsage;
+
+        context.uniGasLeft = 0;
 
         if (balanceOf[address(_execArgs.receiver)] < 0) {
             // Never runs
@@ -505,6 +503,23 @@ contract AnyCallProxyV7 is
             );
         }
         context.uniGasLeft = 0;
+    }
+
+    /**
+     * @dev _anyExec is an external function modified as onlyInternal
+     * because it should run in try-catch block.
+     * It reverts when appExec fail or uni gas check fail.
+     */
+    function _anyExec(ExecArgs calldata _execArgs, uint256 gasLimit) external onlyInternal returns (bool succ, bytes memory res) {
+        (succ, res) = AnyCallExecutor(executor).appExec{gas: gasLimit}(
+            _execArgs.fromChainId,
+            address(_execArgs.sender),
+            address(_execArgs.receiver),
+            _execArgs.data,
+            _execArgs.callNonce
+        );
+        assert(context.uniGasLeft >= 0);
+        return (succ, res);
     }
 
     /// @notice auto fallback
@@ -520,7 +535,7 @@ contract AnyCallProxyV7 is
         );
 
         if (_execArgs.fallbackAddress == uint160(address(0))) {
-            anycallStatus[requestID].status = 1;
+            anycallStatus[requestID].status = Status_Fail;
             emit Fallback(requestID, _execArgs, reason, false);
             return (false, "no fallback address");
         }
@@ -531,9 +546,9 @@ contract AnyCallProxyV7 is
             config.autoFallbackExecutionGasCost
         );
         if (success) {
-            anycallStatus[requestID].status = 2; // auto fallback success
+            anycallStatus[requestID].status = Status_Fallback_Success; // auto fallback success
         } else {
-            anycallStatus[requestID].status = 1; // auto fallback fail
+            anycallStatus[requestID].status = Status_Fail; // auto fallback fail
             anycallStatus[requestID].reason = reason;
         }
         emit Fallback(requestID, _execArgs, reason, success);
@@ -573,7 +588,7 @@ contract AnyCallProxyV7 is
             gasLimit
         );
         if (success) {
-            anycallStatus[requestID].status = 2;
+            anycallStatus[requestID].status = Status_Fallback_Success;
         }
         emit Fallback(
             requestID,
@@ -647,7 +662,7 @@ contract AnyCallProxyV7 is
             _execArgs.data
         );
         anycallStatus[requestID].execHash = calcExecArgsHash(_execArgs_2);
-        anycallStatus[requestID].status = 0;
+        anycallStatus[requestID].status = Status_Sent;
         emit LogAnyCall(requestID, _execArgs_2);
         return requestID;
     }

@@ -570,7 +570,7 @@ contract AnyCallProxyV7 is
         require(_execArgs.fromChainId == block.chainid, "wrong chain id");
         require(_execArgs.callNonce <= callNonce, "wrong nonce");
         require(
-            anycallStatus[requestID].status == 1,
+            anycallStatus[requestID].status == Status_Fail,
             "can not retry succeeded request"
         );
         require(

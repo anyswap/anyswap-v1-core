@@ -1,31 +1,44 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 pragma solidity ^0.8.6;
 
-// IAnycallExecutor interface of anycall executor
-interface IAnycallExecutor {
-    function context() external returns (address from, uint256 fromChainID, uint256 nonce);
+/// IApp interface of the application
+interface IApp {
+    /// (required) call on the destination chain to exec the interaction
+    function anyExecute(bytes calldata _data) external returns (bool success, bytes memory result);
+
+    /// (optional,advised) call back on the originating chain if the cross chain interaction fails
+    function anyFallback(address _to, bytes calldata _data) external;
+}
+
+/// anycall executor is the delegator to execute contract calling (like a sandbox)
+contract AnyCallExecutor {
+    struct Context {
+        address from;
+        uint256 fromChainID;
+        uint256 nonce;
+    }
+
+    Context public context;
+    address public creator;
+
+    constructor() {
+        creator = msg.sender;
+    }
 
     function execute(
         address _to,
         bytes calldata _data,
         address _from,
         uint256 _fromChainID,
-        uint256 _nonce,
-        bool _isFallBack
-    ) external returns (bool success, bytes memory result);
-}
-
-// IAnycallV6Proxy interface of anycall proxy
-interface IAnycallV6Proxy {
-    function executor() external view returns (address);
-
-    function anyCall(
-        address _to,
-        bytes calldata _data,
-        address _fallback,
-        uint256 _toChainID,
-        uint256 _flags
-    ) external payable;
+        uint256 _nonce
+    ) external returns (bool success, bytes memory result) {
+        if (msg.sender != creator) {
+            return (false, "AnyCallExecutor: caller is not the creator");
+        }
+        context = Context({from: _from, fromChainID: _fromChainID, nonce: _nonce});
+        (success, result) = IApp(_to).anyExecute(_data);
+        context = Context({from: address(0), fromChainID: 0, nonce: 0});
+    }
 }
 
 /// anycall proxy is a universal protocal to complete cross-chain interaction.
@@ -35,7 +48,7 @@ interface IAnycallV6Proxy {
 ///         to execute a cross chain interaction
 /// 3. if step 2 failed and step 1 has set non-zero fallback,
 ///         then call `anyFallback` on the originating chain
-contract AnyCallV6Proxy is IAnycallV6Proxy {
+contract AnyCallV6Proxy {
     // Packed fee information (only 1 storage slot)
     struct FeeData {
         uint128 accruedFees;
@@ -76,7 +89,6 @@ contract AnyCallV6Proxy is IAnycallV6Proxy {
     // Flags constant
     uint256 public constant FLAG_MERGE_CONFIG_FLAGS = 0x1;
     uint256 public constant FLAG_PAY_FEE_ON_SRC = 0x1 << 1;
-    uint256 public constant FLAG_EXEC_FALLBACK = 0x1 << 32;
 
     // App Modes constant
     uint256 public constant APPMODE_USE_CUSTOM_SRC_FEES = 0x1;
@@ -116,7 +128,7 @@ contract AnyCallV6Proxy is IAnycallV6Proxy {
     FeeData private _feeData;
 
     // applications should give permission to this executor
-    address public executor;
+    AnyCallExecutor public executor;
 
     mapping(bytes32 => ExecRecord) public retryExecRecords;
 
@@ -169,7 +181,6 @@ contract AnyCallV6Proxy is IAnycallV6Proxy {
     constructor(
         address _admin,
         address _mpc,
-        address _executor,
         uint128 _premium,
         uint256 _mode
     ) {
@@ -187,7 +198,7 @@ contract AnyCallV6Proxy is IAnycallV6Proxy {
         _feeData.premium = _premium;
         mode = _mode;
 
-        executor = _executor;
+        executor = new AnyCallExecutor();
 
         emit ApplyMPC(address(0), _mpc, block.timestamp);
         emit UpdatePremium(0, _premium);
@@ -270,7 +281,6 @@ contract AnyCallV6Proxy is IAnycallV6Proxy {
         uint256 _toChainID,
         uint256 _flags
     ) external lock payable whenNotPaused {
-        require(_flags < FLAG_EXEC_FALLBACK, "wrong flags");
         require(_fallback == address(0) || _fallback == msg.sender, "wrong fallback");
         string memory _appID = appIdentifier[msg.sender];
 
@@ -337,8 +347,7 @@ contract AnyCallV6Proxy is IAnycallV6Proxy {
         bool success;
         {
             bytes memory result;
-            bool _isFallBack = _isSet(_ctx.flags, FLAG_EXEC_FALLBACK);
-            try IAnycallExecutor(executor).execute(_to, _data, _from, _ctx.fromChainID, _ctx.nonce, _isFallBack) returns (bool succ, bytes memory res) {
+            try executor.execute(_to, _data, _from, _ctx.fromChainID, _ctx.nonce) returns (bool succ, bytes memory res) {
                 (success, result) = (succ, res);
             } catch Error(string memory reason) {
                 result = bytes(reason);
@@ -354,15 +363,15 @@ contract AnyCallV6Proxy is IAnycallV6Proxy {
             retryExecRecords[uniqID] = ExecRecord(_to, _data);
             emit StoreRetryExecRecord(_ctx.txhash, _from, _to, _ctx.fromChainID, _ctx.nonce, _data);
         } else {
-            // Call the fallback on the originating chain with the call data
+            // Call the fallback on the originating chain with the call information (to, data)
             nonce++;
             emit LogAnyCall(
                 _from,
                 _fallback,
-                _data,
+                abi.encodeWithSelector(IApp.anyFallback.selector, _to, _data),
                 address(0),
                 _ctx.fromChainID,
-                FLAG_EXEC_FALLBACK, // pay fee on dest chain
+                0, // pay fee on dest chain
                 _appID,
                 nonce);
         }
@@ -392,7 +401,7 @@ contract AnyCallV6Proxy is IAnycallV6Proxy {
         record.to = address(0);
         record.data = "";
 
-        (bool success,) = IAnycallExecutor(executor).execute(_to, _data, _from, _fromChainID, _nonce, false);
+        (bool success,) = executor.execute(_to, _data, _from, _fromChainID, _nonce);
         require(success);
 
         execCompleted[uniqID] = true;
@@ -467,11 +476,6 @@ contract AnyCallV6Proxy is IAnycallV6Proxy {
         emit ApplyMPC(mpc, pendingMPC, block.timestamp);
         mpc = pendingMPC;
         pendingMPC = address(0);
-    }
-
-    /// @notice Set anycall executor
-    function setExecutor(address _executor) external onlyMPC {
-        executor = _executor;
     }
 
     /// @notice Get the total accrued fees in native currency

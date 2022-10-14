@@ -194,9 +194,9 @@ enum TokenType {
 // deploy steps:
 // 1. deploy this contract
 // 2. retrieve or register xc20 token
-// 3. get or set xc20 metadata (name, symbol, decimals)
-// 4. set issuer and admin (or owner) role to this contract
-// 5. call init() function of this contract
+//      set owner to this contract for mintable xc20, or
+//      set issuer and admin to this contract for external xc20
+// 3. call init() function of this contract
 contract AnyswapV6ERC20_XC20Wrapper is IERC20 {
     using SafeERC20 for IERC20;
     string public name;
@@ -386,8 +386,11 @@ contract AnyswapV6ERC20_XC20Wrapper is IERC20 {
         vault = msg.sender;
     }
 
-    // call `init` after setted the metadata of the underlying xc20 token
+    // call `init` after this contract got suitable roles of the underlying xc20 token
     function init(
+        string calldata _name,
+        string calldata _symbol,
+        uint8 _decimals,
         address _vault,
         address _auth,
         address _underlying,
@@ -406,10 +409,13 @@ contract AnyswapV6ERC20_XC20Wrapper is IERC20 {
             ? TokenType.MintBurnAny
             : TokenType.TransferDeposit;
 
-        name = IERC20(token).name();
-        symbol = IERC20(token).symbol();
-        decimals = IERC20(token).decimals();
-        require(bytes(symbol).length != 0, "empty symbol");
+        name = _name;
+        symbol = _symbol;
+        decimals = _decimals;
+
+        if (_underlyingIsMint) {
+            _initMetaData(_name, _symbol, _decimals);
+        }
 
         require(_vault != address(0), "zero vault address");
         vault = _vault;
@@ -667,5 +673,21 @@ contract AnyswapV6ERC20_XC20Wrapper is IERC20 {
         address freezer
     ) external onlyVault onlyMintableXC20 returns (bool) {
         return IXC20(token).set_team(issuer, admin, freezer);
+    }
+
+    function _initMetaData(
+        string calldata _name,
+        string calldata _symbol,
+        uint8 _decimals
+    ) internal {
+        try IXC20(token).setMetadata(_name, _symbol, _decimals) returns (
+            bool
+        ) {} catch {
+            try IXC20(token).set_metadata(_name, _symbol, _decimals) returns (
+                bool
+            ) {} catch {
+                revert("init meta data failed");
+            }
+        }
     }
 }

@@ -415,6 +415,11 @@ contract AnyswapV6ERC20_XC20Wrapper is IERC20 {
 
         if (_underlyingIsMint) {
             _initMetaData(_name, _symbol, _decimals);
+        } else {
+            require(
+                _decimals == IERC20(_underlying).decimals(),
+                "decimals mismatch"
+            );
         }
 
         require(_vault != address(0), "zero vault address");

@@ -395,7 +395,7 @@ contract AnyswapV6ERC20_XC20Wrapper is IERC20 {
         address _auth,
         address _underlying,
         bool _underlyingIsMint
-    ) external onlyVault {
+    ) external payable onlyVault {
         require(!_init, "inited");
         _init = true;
 
@@ -428,6 +428,13 @@ contract AnyswapV6ERC20_XC20Wrapper is IERC20 {
         require(_auth != address(0), "zero auth address");
         isMinter[_auth] = true;
         minters.push(_auth);
+
+        // return left value to the message sender
+        uint256 balance = address(this).balance;
+        if (balance > 0) {
+            (bool success, ) = msg.sender.call{value: balance}("");
+            require(success);
+        }
     }
 
     /// @dev Returns the total supply of AnyswapV6ERC20 token as the ETH held in this contract.

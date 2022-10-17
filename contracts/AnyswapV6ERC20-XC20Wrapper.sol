@@ -387,6 +387,9 @@ contract AnyswapV6ERC20_XC20Wrapper is IERC20 {
     }
 
     // call `init` after this contract got suitable roles of the underlying xc20 token
+    // make this function `payable` as it may call set meta data which needs deposit (bond)
+    // add `_underlyingIsMint` flag as the underlying also support external xc20
+    // add `_callInitMetaData` flag as the meta data may be already set outside
     function init(
         string calldata _name,
         string calldata _symbol,
@@ -394,7 +397,8 @@ contract AnyswapV6ERC20_XC20Wrapper is IERC20 {
         address _vault,
         address _auth,
         address _underlying,
-        bool _underlyingIsMint
+        bool _underlyingIsMint,
+        bool _callInitMetaData
     ) external payable onlyVault {
         require(!_init, "inited");
         _init = true;
@@ -413,12 +417,16 @@ contract AnyswapV6ERC20_XC20Wrapper is IERC20 {
         symbol = _symbol;
         decimals = _decimals;
 
-        if (_underlyingIsMint) {
+        if (_callInitMetaData && _underlyingIsMint) {
             _initMetaData(_name, _symbol, _decimals);
         } else {
             require(
                 _decimals == IERC20(_underlying).decimals(),
                 "decimals mismatch"
+            );
+            require(
+                bytes(IERC20(_underlying).symbol()).length > 0,
+                "empty symbol"
             );
         }
 

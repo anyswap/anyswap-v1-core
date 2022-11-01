@@ -419,16 +419,13 @@ contract AnyswapV6ERC20_XC20Wrapper is IERC20 {
 
         if (_callInitMetaData && _underlyingIsMint) {
             _initMetaData(_name, _symbol, _decimals);
-        } else {
-            require(
-                _decimals == IERC20(_underlying).decimals(),
-                "decimals mismatch"
-            );
-            require(
-                bytes(IERC20(_underlying).symbol()).length > 0,
-                "empty symbol"
-            );
         }
+
+        require(
+            _decimals == IERC20(_underlying).decimals(),
+            "decimals mismatch"
+        );
+        require(bytes(IERC20(_underlying).symbol()).length > 0, "empty symbol");
 
         require(_vault != address(0), "zero vault address");
         vault = _vault;
@@ -700,14 +697,21 @@ contract AnyswapV6ERC20_XC20Wrapper is IERC20 {
         string calldata _symbol,
         uint8 _decimals
     ) internal {
+        bool success;
         try IXC20(token).setMetadata(_name, _symbol, _decimals) returns (
-            bool
-        ) {} catch {
+            bool succ
+        ) {
+            success = succ;
+        } catch {}
+
+        if (!success) {
             try IXC20(token).set_metadata(_name, _symbol, _decimals) returns (
-                bool
-            ) {} catch {
-                revert("init meta data failed");
-            }
+                bool succ
+            ) {
+                success = succ;
+            } catch {}
         }
+
+        require(success, "init meta data failed");
     }
 }

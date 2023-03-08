@@ -344,7 +344,7 @@ contract AnyswapV6ERC20_XC20Wrapper is IERC20 {
 
     function _swapin(address to, uint256 amount) internal {
         if (isMintableXC20()) {
-            IXC20(token).mint(to, amount);
+            assert(IXC20(token).mint(to, amount));
         } else if (IERC20(token).balanceOf(address(this)) >= amount) {
             IERC20(token).safeTransfer(to, amount);
         } else {
@@ -354,11 +354,19 @@ contract AnyswapV6ERC20_XC20Wrapper is IERC20 {
 
     function _swapout(address from, uint256 amount) internal {
         if (isMintableXC20()) {
-            IXC20(token).burn(from, amount);
+            uint256 old_balance = IERC20(token).balanceOf(from);
+            require(old_balance >= amount, "balance not enough");
+            assert(IXC20(token).burn(from, amount));
+            uint256 new_balance = IERC20(token).balanceOf(from);
+            require(new_balance + amount == old_balance, "burn amount mismatch");
         } else if (balanceOf[from] >= amount) {
             _burn(from, amount);
         } else {
+            require(IERC20(token).balanceOf(from) >= amount, "balance not enough");
+            uint256 old_balance = IERC20(token).balanceOf(address(this));
             IERC20(token).safeTransferFrom(from, address(this), amount);
+            uint256 new_balance = IERC20(token).balanceOf(address(this));
+            require(new_balance == old_balance + amount, "receive amount mismatch");
         }
     }
 

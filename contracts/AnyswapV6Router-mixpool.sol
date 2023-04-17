@@ -520,12 +520,19 @@ contract AnyswapV6Router_MixPool is MPCManageable {
     ) external {
         address pool = mixpool;
         (, bool canMint) = IAnyswapMixPool(pool).tokenInfo(token);
+        uint256 recvAmount = amount;
         if (!canMint && IAnyswapMixPool(pool).balanceOf(token, msg.sender) < amount) {
-            IERC20(token).safeTransferFrom(msg.sender, token, amount);
+            uint256 old_balance = IERC20(token).balanceOf(pool);
+            IERC20(token).safeTransferFrom(msg.sender, pool, amount);
+            uint256 new_balance = IERC20(token).balanceOf(pool);
+            require(
+                new_balance >= old_balance && new_balance <= old_balance + amount
+            );
+            recvAmount = new_balance - old_balance;
         } else {
             IAnyswapMixPool(pool).burn(token, msg.sender, amount);
         }
-        emit LogAnySwapOutMixPool(token, msg.sender, to, amount, block.chainid, toChainID);
+        emit LogAnySwapOutMixPool(token, msg.sender, to, recvAmount, block.chainid, toChainID);
     }
 
     function anySwapIn(

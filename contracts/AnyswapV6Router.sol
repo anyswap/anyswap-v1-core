@@ -289,20 +289,43 @@ contract AnyswapV6Router {
         _anySwapOut(msg.sender, token, to, amount, toChainID);
     }
 
-    // Swaps `amount` `token` from this chain to `toChainID` chain with recipient `to` by minting with `underlying`
-    function anySwapOutUnderlying(address token, address to, uint amount, uint toChainID) external {
+    function _anySwapOutUnderlying(address token, uint256 amount) internal returns (uint256) {
         address _underlying = AnyswapV1ERC20(token).underlying();
         require(_underlying != address(0), "AnyswapV6Router: no underlying");
+        uint256 old_balance = IERC20(_underlying).balanceOf(token);
         IERC20(_underlying).safeTransferFrom(msg.sender, token, amount);
-        emit LogAnySwapOut(token, msg.sender, to, amount, cID(), toChainID);
+        uint256 new_balance = IERC20(_underlying).balanceOf(token);
+        require(
+            new_balance >= old_balance && new_balance <= old_balance + amount
+        );
+        return new_balance - old_balance;
+    }
+
+    // Swaps `amount` `token` from this chain to `toChainID` chain with recipient `to` by minting with `underlying`
+    function anySwapOutUnderlying(address token, address to, uint amount, uint toChainID) external {
+        uint256 recvAmount = _anySwapOutUnderlying(token, amount);
+        emit LogAnySwapOut(token, msg.sender, to, recvAmount, cID(), toChainID);
+    }
+
+    function _anySwapOutNative(address token) internal returns (uint256) {
+        require(wNATIVE != address(0), "AnyswapV6Router: zero wNATIVE");
+        require(
+            AnyswapV1ERC20(token).underlying() == wNATIVE,
+            "AnyswapV6Router: underlying is not wNATIVE"
+        );
+        uint256 old_balance = IERC20(wNATIVE).balanceOf(token);
+        IwNATIVE(wNATIVE).deposit{value: msg.value}();
+        IERC20(wNATIVE).safeTransfer(token, msg.value);
+        uint256 new_balance = IERC20(wNATIVE).balanceOf(token);
+        require(
+            new_balance >= old_balance && new_balance <= old_balance + msg.value
+        );
+        return new_balance - old_balance;
     }
 
     function anySwapOutNative(address token, address to, uint toChainID) external payable {
-        require(wNATIVE != address(0), "AnyswapV6Router: zero wNATIVE");
-        require(AnyswapV1ERC20(token).underlying() == wNATIVE, "AnyswapV6Router: underlying is not wNATIVE");
-        IwNATIVE(wNATIVE).deposit{value: msg.value}();
-        assert(IwNATIVE(wNATIVE).transfer(token, msg.value));
-        emit LogAnySwapOut(token, msg.sender, to, msg.value, cID(), toChainID);
+        uint256 recvAmount = _anySwapOutNative(token);
+        emit LogAnySwapOut(token, msg.sender, to, recvAmount, cID(), toChainID);
     }
 
     function anySwapOut(address[] calldata tokens, address[] calldata to, uint[] calldata amounts, uint[] calldata toChainIDs) external {
@@ -317,18 +340,13 @@ contract AnyswapV6Router {
     }
 
     function anySwapOutUnderlying(address token, string memory to, uint amount, uint toChainID) external {
-        address _underlying = AnyswapV1ERC20(token).underlying();
-        require(_underlying != address(0), "AnyswapV6Router: no underlying");
-        IERC20(_underlying).safeTransferFrom(msg.sender, token, amount);
-        emit LogAnySwapOut(token, msg.sender, to, amount, cID(), toChainID);
+        uint256 recvAmount = _anySwapOutUnderlying(token, amount);
+        emit LogAnySwapOut(token, msg.sender, to, recvAmount, cID(), toChainID);
     }
 
     function anySwapOutNative(address token, string memory to, uint toChainID) external payable {
-        require(wNATIVE != address(0), "AnyswapV6Router: zero wNATIVE");
-        require(AnyswapV1ERC20(token).underlying() == wNATIVE, "AnyswapV6Router: underlying is not wNATIVE");
-        IwNATIVE(wNATIVE).deposit{value: msg.value}();
-        assert(IwNATIVE(wNATIVE).transfer(token, msg.value));
-        emit LogAnySwapOut(token, msg.sender, to, msg.value, cID(), toChainID);
+        uint256 recvAmount = _anySwapOutNative(token);
+        emit LogAnySwapOut(token, msg.sender, to, recvAmount, cID(), toChainID);
     }
 
     // swaps `amount` `token` in `fromChainID` to `to` on this chainID
